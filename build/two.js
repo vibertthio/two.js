@@ -4,7 +4,7 @@
  * agnostic enabling the same api for rendering in multiple contexts: webgl,
  * canvas2d, and svg.
  *
- * Copyright (c) 2012 - 2016 jonobr1 / http://jonobr1.com
+ * Copyright (c) 2012 - 2017 jonobr1 / http://jonobr1.com
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -435,7 +435,8 @@ this.Two = (function(previousTwo) {
       change: 'change',
       remove: 'remove',
       insert: 'insert',
-      order: 'order'
+      order: 'order',
+      load: 'load'
     },
 
     Commands: {
@@ -461,6 +462,8 @@ this.Two = (function(previousTwo) {
     },
 
     Utils: _.extend(_, {
+
+      performance: perf,
 
       defineProperty: function(property) {
 
@@ -1711,6 +1714,10 @@ this.Two = (function(previousTwo) {
 
       },
 
+      lerp: function(a, b, t) {
+        return t * (b - a) + a;
+      },
+
       // A pretty fast toFixed(3) alternative
       // See http://jsperf.com/parsefloat-tofixed-vs-math-round/18
       toFixed: function(v) {
@@ -2221,6 +2228,37 @@ this.Two = (function(previousTwo) {
 
     },
 
+    makeSprite: function(path, x, y, cols, rows, frameRate, autostart) {
+
+      var sprite = new Two.Sprite(path, x, y, cols, rows, frameRate);
+      if (!!autostart) {
+        sprite.play();
+      }
+      this.add(sprite);
+
+      return sprite;
+
+    },
+
+    makeImageSequence: function(paths, x, y, frameRate, autostart) {
+
+      var imageSequence = new Two.ImageSequence(paths, x, y, frameRate);
+      if (!!autostart) {
+        imageSequence.play();
+      }
+      this.add(imageSequence);
+
+      return imageSequence;
+
+    },
+
+    makeTexture: function(path, callback) {
+
+      var texture = new Two.Texture(path, callback);
+      return texture;
+
+    },
+
     makeGroup: function(o) {
 
       var objects = o;
@@ -2345,6 +2383,44 @@ this.Two = (function(previousTwo) {
   }
 
   return Two;
+
+})((typeof global !== 'undefined' ? global : this).Two);
+
+(function(Two) {
+
+  var _ = Two.Utils;
+
+  var Registry = Two.Registry = function() {
+
+    this.map = {};
+
+  };
+
+  _.extend(Registry, {
+
+  });
+
+  _.extend(Registry.prototype, {
+
+    add: function(id, obj) {
+      this.map[id] = obj;
+      return this;
+    },
+
+    remove: function(id) {
+      delete this.map[id];
+      return this;
+    },
+
+    get: function(id) {
+      return this.map[id];
+    },
+
+    contains: function(id) {
+      return id in this.map;
+    }
+
+  });
 
 })((typeof global !== 'undefined' ? global : this).Two);
 
@@ -2482,11 +2558,11 @@ this.Two = (function(previousTwo) {
 
     isZero: function(eps) {
       eps = (typeof eps === 'undefined') ?  0.0001 : eps;
-      return (this.length() <  eps);
+      return (this.length() < eps);
     },
 
     toString: function() {
-      return this.x + ',' + this.y;
+      return this.x + ', ' + this.y;
     },
 
     toObject: function() {
@@ -2623,7 +2699,7 @@ this.Two = (function(previousTwo) {
     },
 
     toString: function() {
-      return this._x + ',' + this._y;
+      return this._x + ', ' + this._y;
     },
 
     toObject: function() {
@@ -2803,6 +2879,9 @@ this.Two = (function(previousTwo) {
     },
 
     toString: function() {
+      if (!this.controls) {
+        return [this._x, this._y].join(', ');
+      }
       return [this._x, this._y, this.controls.left.x, this.controls.left.y,
         this.controls.right.x, this.controls.right.y].join(', ');
     }
@@ -3600,18 +3679,22 @@ this.Two = (function(previousTwo) {
           changed.d = vertices;
         }
 
+        if (this._fill && this._fill._renderer) {
+          this._fill._update();
+          svg[this._fill._renderer.type].render.call(this._fill, domElement, true);
+        }
+
         if (this._flagFill) {
-          if (this._fill && this._fill._renderer) {
-            svg[this._fill._renderer.type].render.call(this._fill, domElement);
-          }
           changed.fill = this._fill && this._fill.id
             ? 'url(#' + this._fill.id + ')' : this._fill;
         }
 
+        if (this._stroke && this._stroke._renderer) {
+          this._stroke._update();
+          svg[this._stroke._renderer.type].render.call(this._stroke, domElement, true);
+        }
+
         if (this._flagStroke) {
-          if (this._stroke && this._stroke._renderer) {
-            svg[this._stroke._renderer.type].render.call(this._stroke, domElement);
-          }
           changed.stroke = this._stroke && this._stroke.id
             ? 'url(#' + this._stroke.id + ')' : this._stroke;
         }
@@ -3729,10 +3812,17 @@ this.Two = (function(previousTwo) {
         if (this._flagDecoration) {
           changed['text-decoration'] = this._decoration;
         }
-
+        if (this._fill && this._fill._renderer) {
+          this._fill._update();
+          svg[this._fill._renderer.type].render.call(this._fill, domElement, true);
+        }
         if (this._flagFill) {
           changed.fill = this._fill && this._fill.id
             ? 'url(#' + this._fill.id + ')' : this._fill;
+        }
+        if (this._stroke && this._stroke._renderer) {
+          this._stroke._update();
+          svg[this._stroke._renderer.type].render.call(this._stroke, domElement, true);
         }
         if (this._flagStroke) {
           changed.stroke = this._stroke && this._stroke.id
@@ -3790,9 +3880,11 @@ this.Two = (function(previousTwo) {
 
     'linear-gradient': {
 
-      render: function(domElement) {
+      render: function(domElement, silent) {
 
-        this._update();
+        if (!silent) {
+          this._update();
+        }
 
         var changed = {};
 
@@ -3825,7 +3917,12 @@ this.Two = (function(previousTwo) {
 
         if (this._flagStops) {
 
-          this._renderer.elem.childNodes.length = 0;
+          var lengthChanged = this._renderer.elem.childNodes.length
+            !== this.stops.length;
+
+          if (lengthChanged) {
+            this._renderer.elem.childNodes.length = 0;
+          }
 
           for (var i = 0; i < this.stops.length; i++) {
 
@@ -3848,8 +3945,9 @@ this.Two = (function(previousTwo) {
               svg.setAttributes(stop._renderer.elem, attrs);
             }
 
-            this._renderer.elem.appendChild(stop._renderer.elem);
-
+            if (lengthChanged) {
+              this._renderer.elem.appendChild(stop._renderer.elem);
+            }
             stop.flagReset();
 
           }
@@ -3864,9 +3962,11 @@ this.Two = (function(previousTwo) {
 
     'radial-gradient': {
 
-      render: function(domElement) {
+      render: function(domElement, silent) {
 
-        this._update();
+        if (!silent) {
+          this._update();
+        }
 
         var changed = {};
 
@@ -3905,7 +4005,12 @@ this.Two = (function(previousTwo) {
 
         if (this._flagStops) {
 
-          this._renderer.elem.childNodes.length = 0;
+          var lengthChanged = this._renderer.elem.childNodes.length
+            !== this.stops.length;
+
+          if (lengthChanged) {
+            this._renderer.elem.childNodes.length = 0;
+          }
 
           for (var i = 0; i < this.stops.length; i++) {
 
@@ -3928,11 +4033,119 @@ this.Two = (function(previousTwo) {
               svg.setAttributes(stop._renderer.elem, attrs);
             }
 
-            this._renderer.elem.appendChild(stop._renderer.elem);
+            if (lengthChanged) {
+              this._renderer.elem.appendChild(stop._renderer.elem);
+            }
             stop.flagReset();
 
           }
 
+        }
+
+        return this.flagReset();
+
+      }
+
+    },
+
+    texture: {
+
+      render: function(domElement, silent) {
+
+        if (!silent) {
+          this._update();
+        }
+
+        var changed = {};
+        var styles = {};
+        var image = this.image;
+
+        if (this._flagLoaded && this.loaded) {
+
+          styles.x = 0;
+          styles.y = 0;
+          styles.width = image.width;
+          styles.height = image.height;
+
+          switch (image.nodeName.toLowerCase()) {
+
+            case 'canvas':
+              styles.href = image.toDataURL('image/png');
+              break;
+            case 'img':
+            case 'image':
+              styles.href = this.src;
+              break;
+
+          }
+
+        }
+
+        if (this._flagOffset || this._flagLoaded || this._flagScale) {
+
+          changed.x = this._offset.x;
+          changed.y = this._offset.y;
+
+          if (image) {
+
+            changed.x -= image.width / 2;
+            changed.y -= image.height / 2;
+
+            if (this._scale instanceof Two.Vector) {
+              changed.x *= this._scale.x;
+              changed.y *= this._scale.y;
+            } else {
+              changed.x *= this._scale;
+              changed.y *= this._scale;
+            }
+          }
+
+        }
+
+        if (this._flagScale || this._flagLoaded) {
+
+          changed.width = 0;
+          changed.height = 0;
+
+          if (image) {
+            if (this._scale instanceof Two.Vector) {
+              changed.width = image.width * this._scale.x;
+              changed.height = image.height * this._scale.y;
+            } else {
+              changed.width = image.width * this._scale;
+              changed.height = image.height * this._scale;
+            }
+          }
+
+          styles.width = changed.width;
+          styles.height = changed.height;
+
+        }
+
+        if (this._flagScale || this._flagLoaded) {
+          if (!this._renderer.image) {
+            this._renderer.image = svg.createElement('image', styles);
+          } else if (!_.isEmpty(styles)) {
+            svg.setAttributes(this._renderer.image, styles);
+          }
+        }
+
+        if (!this._renderer.elem) {
+
+          changed.id = this.id;
+          changed.patternUnits = 'userSpaceOnUse';
+          this._renderer.elem = svg.createElement('pattern', changed);
+          domElement.defs.appendChild(this._renderer.elem);
+
+        } else if (!_.isEmpty(changed)) {
+
+          svg.setAttributes(this._renderer.elem, changed);
+
+        }
+
+        if (this._renderer.elem && this._renderer.image && !this._renderer.appended) {
+          this._renderer.elem.appendChild(this._renderer.image);
+          this._renderer.appended = true;
         }
 
         return this.flagReset();
@@ -4091,7 +4304,7 @@ this.Two = (function(previousTwo) {
 
         var matrix, stroke, linewidth, fill, opacity, visible, cap, join, miter,
             closed, commands, length, last, next, prev, a, b, c, d, ux, uy, vx, vy,
-            ar, bl, br, cl, x, y, mask, clip, defaultMatrix;
+            ar, bl, br, cl, x, y, mask, clip, defaultMatrix, isOffset;
 
         // TODO: Add a check here to only invoke _update if need be.
         this._update();
@@ -4140,7 +4353,7 @@ this.Two = (function(previousTwo) {
             ctx.fillStyle = fill;
           } else {
             canvas[fill._renderer.type].render.call(fill, ctx);
-            ctx.fillStyle = fill._renderer.gradient;
+            ctx.fillStyle = fill._renderer.effect;
           }
         }
         if (stroke) {
@@ -4148,7 +4361,7 @@ this.Two = (function(previousTwo) {
             ctx.strokeStyle = stroke;
           } else {
             canvas[stroke._renderer.type].render.call(stroke, ctx);
-            ctx.strokeStyle = stroke._renderer.gradient;
+            ctx.strokeStyle = stroke._renderer.effect;
           }
         }
         if (linewidth) {
@@ -4261,8 +4474,33 @@ this.Two = (function(previousTwo) {
         }
 
         if (!clip && !parentClipped) {
-          if (!canvas.isHidden.test(fill)) ctx.fill();
-          if (!canvas.isHidden.test(stroke)) ctx.stroke();
+          if (!canvas.isHidden.test(fill)) {
+            isOffset = fill._renderer && fill._renderer.offset
+            if (isOffset) {
+              ctx.save();
+              ctx.translate(
+                - fill._renderer.offset.x, - fill._renderer.offset.y);
+              ctx.scale(fill._renderer.scale.x, fill._renderer.scale.y);
+            }
+            ctx.fill();
+            if (isOffset) {
+              ctx.restore();
+            }
+          }
+          if (!canvas.isHidden.test(stroke)) {
+            isOffset = stroke._renderer && stroke._renderer.offset;
+            if (isOffset) {
+              ctx.save();
+              ctx.translate(
+                - stroke._renderer.offset.x, - stroke._renderer.offset.y);
+              ctx.scale(stroke._renderer.scale.x, stroke._renderer.scale.y);
+              ctx.lineWidth = linewidth / stroke._renderer.scale.x;
+            }
+            ctx.stroke();
+            if (isOffset) {
+              ctx.restore();
+            }
+          }
         }
 
         if (!defaultMatrix) {
@@ -4271,32 +4509,6 @@ this.Two = (function(previousTwo) {
 
         if (clip && !parentClipped) {
           ctx.clip();
-        }
-
-        return this.flagReset();
-
-      }
-
-    },
-
-    'linear-gradient': {
-
-      render: function(ctx) {
-
-        this._update();
-
-        if (!this._renderer.gradient || this._flagEndPoints || this._flagStops) {
-
-          this._renderer.gradient = ctx.createLinearGradient(
-            this.left._x, this.left._y,
-            this.right._x, this.right._y
-          );
-
-          for (var i = 0; i < this.stops.length; i++) {
-            var stop = this.stops[i];
-            this._renderer.gradient.addColorStop(stop._offset, stop._color);
-          }
-
         }
 
         return this.flagReset();
@@ -4319,6 +4531,10 @@ this.Two = (function(previousTwo) {
         var opacity = this._opacity * this.parent._renderer.opacity;
         var visible = this._visible;
         var defaultMatrix = isDefaultMatrix(matrix);
+        var isOffset = fill._renderer && fill._renderer.offset
+          && stroke._renderer && stroke._renderer.offset;
+
+        var a, b, c, d, e, sx, sy;
 
         // mask = this._mask;
         var clip = this._clip;
@@ -4343,8 +4559,10 @@ this.Two = (function(previousTwo) {
         //   canvas[mask._renderer.type].render.call(mask, ctx, true);
         // }
 
-        ctx.font = [this._style, this._weight, this._size + 'px/' +
-          this._leading + 'px', this._family].join(' ');
+        if (!isOffset) {
+          ctx.font = [this._style, this._weight, this._size + 'px/' +
+            this._leading + 'px', this._family].join(' ');
+        }
 
         ctx.textAlign = canvas.alignments[this._alignment] || this._alignment;
         ctx.textBaseline = this._baseline;
@@ -4355,7 +4573,7 @@ this.Two = (function(previousTwo) {
             ctx.fillStyle = fill;
           } else {
             canvas[fill._renderer.type].render.call(fill, ctx);
-            ctx.fillStyle = fill._renderer.gradient;
+            ctx.fillStyle = fill._renderer.effect;
           }
         }
         if (stroke) {
@@ -4363,7 +4581,7 @@ this.Two = (function(previousTwo) {
             ctx.strokeStyle = stroke;
           } else {
             canvas[stroke._renderer.type].render.call(stroke, ctx);
-            ctx.strokeStyle = stroke._renderer.gradient;
+            ctx.strokeStyle = stroke._renderer.effect;
           }
         }
         if (linewidth) {
@@ -4374,8 +4592,65 @@ this.Two = (function(previousTwo) {
         }
 
         if (!clip && !parentClipped) {
-          if (!canvas.isHidden.test(fill)) ctx.fillText(this.value, 0, 0);
-          if (!canvas.isHidden.test(stroke)) ctx.strokeText(this.value, 0, 0);
+
+          if (!canvas.isHidden.test(fill)) {
+
+            if (fill._renderer && fill._renderer.offset) {
+
+              sx = toFixed(fill._renderer.scale.x);
+              sy = toFixed(fill._renderer.scale.y);
+
+              ctx.save();
+              ctx.translate( - toFixed(fill._renderer.offset.x),
+                - toFixed(fill._renderer.offset.y));
+              ctx.scale(sx, sy);
+
+              a = this._size / fill._renderer.scale.y;
+              b = this._leading / fill._renderer.scale.y;
+              ctx.font = [this._style, this._weight, toFixed(a) + 'px/',
+                toFixed(b) + 'px', this._family].join(' ');
+
+              c = fill._renderer.offset.x / fill._renderer.scale.x;
+              d = fill._renderer.offset.y / fill._renderer.scale.y;
+
+              ctx.fillText(this.value, toFixed(c), toFixed(d));
+              ctx.restore();
+
+            } else {
+              ctx.fillText(this.value, 0, 0);
+            }
+
+          }
+
+          if (!canvas.isHidden.test(stroke)) {
+
+            if (stroke._renderer && stroke._renderer.offset) {
+
+              sx = toFixed(stroke._renderer.scale.x);
+              sy = toFixed(stroke._renderer.scale.y);
+
+              ctx.save();
+              ctx.translate(- toFixed(stroke._renderer.offset.x),
+                - toFixed(stroke._renderer.offset.y));
+              ctx.scale(sx, sy);
+
+              a = this._size / stroke._renderer.scale.y;
+              b = this._leading / stroke._renderer.scale.y;
+              ctx.font = [this._style, this._weight, toFixed(a) + 'px/',
+                toFixed(b) + 'px', this._family].join(' ');
+
+              c = stroke._renderer.offset.x / stroke._renderer.scale.x;
+              d = stroke._renderer.offset.y / stroke._renderer.scale.y;
+              e = linewidth / stroke._renderer.scale.x;
+
+              ctx.lineWidth = toFixed(e);
+              ctx.strokeText(this.value, toFixed(c), toFixed(d));
+              ctx.restore();
+
+            } else {
+              ctx.strokeText(this.value, 0, 0);
+            }
+          }
         }
 
         if (!defaultMatrix) {
@@ -4393,23 +4668,22 @@ this.Two = (function(previousTwo) {
 
     },
 
-    'radial-gradient': {
+    'linear-gradient': {
 
       render: function(ctx) {
 
         this._update();
 
-        if (!this._renderer.gradient || this._flagCenter || this._flagFocal
-            || this._flagRadius || this._flagStops) {
+        if (!this._renderer.effect || this._flagEndPoints || this._flagStops) {
 
-          this._renderer.gradient = ctx.createRadialGradient(
-            this.center._x, this.center._y, 0,
-            this.focal._x, this.focal._y, this._radius
+          this._renderer.effect = ctx.createLinearGradient(
+            this.left._x, this.left._y,
+            this.right._x, this.right._y
           );
 
           for (var i = 0; i < this.stops.length; i++) {
             var stop = this.stops[i];
-            this._renderer.gradient.addColorStop(stop._offset, stop._color);
+            this._renderer.effect.addColorStop(stop._offset, stop._color);
           }
 
         }
@@ -4417,6 +4691,91 @@ this.Two = (function(previousTwo) {
         return this.flagReset();
 
       }
+
+    },
+
+    'radial-gradient': {
+
+      render: function(ctx) {
+
+        this._update();
+
+        if (!this._renderer.effect || this._flagCenter || this._flagFocal
+            || this._flagRadius || this._flagStops) {
+
+          this._renderer.effect = ctx.createRadialGradient(
+            this.center._x, this.center._y, 0,
+            this.focal._x, this.focal._y, this._radius
+          );
+
+          for (var i = 0; i < this.stops.length; i++) {
+            var stop = this.stops[i];
+            this._renderer.effect.addColorStop(stop._offset, stop._color);
+          }
+
+        }
+
+        return this.flagReset();
+
+      }
+
+    },
+
+    texture: {
+
+      render: function(ctx) {
+
+        this._update();
+
+        var image = this.image;
+
+        if (!this._renderer.effect || ((this._flagLoaded || this._flagImage) && this.loaded)) {
+          this._renderer.effect = ctx.createPattern(this.image, 'repeat');
+        }
+
+        if (this._flagOffset || this._flagLoaded || this._flagScale) {
+
+          if (!(this._renderer.offset instanceof Two.Vector)) {
+            this._renderer.offset = new Two.Vector();
+          }
+
+          this._renderer.offset.x = this._offset.x;
+          this._renderer.offset.y = this._offset.y;
+
+          if (image) {
+
+            this._renderer.offset.x -= image.width / 2;
+            this._renderer.offset.y -= image.height / 2;
+
+            if (this._scale instanceof Two.Vector) {
+              this._renderer.offset.x *= this._scale.x;
+              this._renderer.offset.y *= this._scale.y;
+            } else {
+              this._renderer.offset.x *= this._scale;
+              this._renderer.offset.y *= this._scale;
+            }
+          }
+
+        }
+
+        if (this._flagScale || this._flagLoaded) {
+
+          if (!(this._renderer.scale instanceof Two.Vector)) {
+            this._renderer.scale = new Two.Vector();
+          }
+
+          if (this._scale instanceof Two.Vector) {
+            this._renderer.scale.copy(this._scale);
+          } else {
+            this._renderer.scale.set(this._scale, this._scale);
+          }
+
+        }
+
+        return this.flagReset();
+
+      }
+
     }
 
   };
@@ -4642,6 +5001,7 @@ this.Two = (function(previousTwo) {
       updateCanvas: function(elem) {
 
         var next, prev, a, c, ux, uy, vx, vy, ar, bl, br, cl, x, y;
+        var isOffset;
 
         var commands = elem._vertices;
         var canvas = this.canvas;
@@ -4674,7 +5034,7 @@ this.Two = (function(previousTwo) {
             ctx.fillStyle = fill;
           } else {
             webgl[fill._renderer.type].render.call(fill, ctx, elem);
-            ctx.fillStyle = fill._renderer.gradient;
+            ctx.fillStyle = fill._renderer.effect;
           }
         }
         if (stroke) {
@@ -4682,7 +5042,7 @@ this.Two = (function(previousTwo) {
             ctx.strokeStyle = stroke;
           } else {
             webgl[stroke._renderer.type].render.call(stroke, ctx, elem);
-            ctx.strokeStyle = stroke._renderer.gradient;
+            ctx.strokeStyle = stroke._renderer.effect;
           }
         }
         if (linewidth) {
@@ -4799,8 +5159,34 @@ this.Two = (function(previousTwo) {
           ctx.closePath();
         }
 
-        if (!webgl.isHidden.test(fill)) ctx.fill();
-        if (!webgl.isHidden.test(stroke)) ctx.stroke();
+        if (!webgl.isHidden.test(fill)) {
+          isOffset = fill._renderer && fill._renderer.offset
+          if (isOffset) {
+            ctx.save();
+            ctx.translate(
+              - fill._renderer.offset.x, - fill._renderer.offset.y);
+            ctx.scale(fill._renderer.scale.x, fill._renderer.scale.y);
+          }
+          ctx.fill();
+          if (isOffset) {
+            ctx.restore();
+          }
+        }
+
+        if (!webgl.isHidden.test(stroke)) {
+          isOffset = stroke._renderer && stroke._renderer.offset;
+          if (isOffset) {
+            ctx.save();
+            ctx.translate(
+              - stroke._renderer.offset.x, - stroke._renderer.offset.y);
+            ctx.scale(stroke._renderer.scale.x, stroke._renderer.scale.y);
+            ctx.lineWidth = linewidth / stroke._renderer.scale.x;
+          }
+          ctx.stroke();
+          if (isOffset) {
+            ctx.restore();
+          }
+        }
 
         ctx.restore();
 
@@ -4887,6 +5273,8 @@ this.Two = (function(previousTwo) {
           return this;
         }
 
+        this._update();
+
         // Calculate what changed
 
         var parent = this.parent;
@@ -4895,14 +5283,14 @@ this.Two = (function(previousTwo) {
         var flagTexture = this._flagVertices || this._flagFill
           || (this._fill instanceof Two.LinearGradient && (this._fill._flagSpread || this._fill._flagStops || this._fill._flagEndPoints))
           || (this._fill instanceof Two.RadialGradient && (this._fill._flagSpread || this._fill._flagStops || this._fill._flagRadius || this._fill._flagCenter || this._fill._flagFocal))
+          || (this._fill instanceof Two.Texture && (this._fill._flagLoaded && this._fill.loaded || this._fill._flagOffset || this._fill._flagScale))
           || (this._stroke instanceof Two.LinearGradient && (this._stroke._flagSpread || this._stroke._flagStops || this._stroke._flagEndPoints))
           || (this._stroke instanceof Two.RadialGradient && (this._stroke._flagSpread || this._stroke._flagStops || this._stroke._flagRadius || this._stroke._flagCenter || this._stroke._flagFocal))
+          || (this._stroke instanceof Two.Texture && (this._stroke._flagLoaded && this._stroke.loaded || this._stroke._flagOffset || this._fill._flagScale))
           || this._flagStroke || this._flagLinewidth || this._flagOpacity
           || parent._flagOpacity || this._flagVisible || this._flagCap
           || this._flagJoin || this._flagMiter || this._flagScale
           || !this._renderer.texture;
-
-        this._update();
 
         if (flagParentMatrix || flagMatrix) {
 
@@ -4993,10 +5381,16 @@ this.Two = (function(previousTwo) {
         var cx = centroid.x;
         var cy = centroid.y;
 
+        var a, b, c, d, e, sx, sy;
+        var isOffset = fill._renderer && fill._renderer.offset
+          && stroke._renderer && stroke._renderer.offset;
+
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        ctx.font = [elem._style, elem._weight, elem._size + 'px/' +
-          elem._leading + 'px', elem._family].join(' ');
+        if (!isOffset) {
+          ctx.font = [elem._style, elem._weight, elem._size + 'px/' +
+            elem._leading + 'px', elem._family].join(' ');
+        }
 
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -5007,7 +5401,7 @@ this.Two = (function(previousTwo) {
             ctx.fillStyle = fill;
           } else {
             webgl[fill._renderer.type].render.call(fill, ctx, elem);
-            ctx.fillStyle = fill._renderer.gradient;
+            ctx.fillStyle = fill._renderer.effect;
           }
         }
         if (stroke) {
@@ -5015,7 +5409,7 @@ this.Two = (function(previousTwo) {
             ctx.strokeStyle = stroke;
           } else {
             webgl[stroke._renderer.type].render.call(stroke, ctx, elem);
-            ctx.strokeStyle = stroke._renderer.gradient;
+            ctx.strokeStyle = stroke._renderer.effect;
           }
         }
         if (linewidth) {
@@ -5029,8 +5423,65 @@ this.Two = (function(previousTwo) {
         ctx.scale(scale, scale);
         ctx.translate(cx, cy);
 
-        if (!webgl.isHidden.test(fill)) ctx.fillText(elem.value, 0, 0);
-        if (!webgl.isHidden.test(stroke)) ctx.strokeText(elem.value, 0, 0);
+        if (!webgl.isHidden.test(fill)) {
+
+          if (fill._renderer && fill._renderer.offset) {
+
+            sx = toFixed(fill._renderer.scale.x);
+            sy = toFixed(fill._renderer.scale.y);
+
+            ctx.save();
+            ctx.translate( - toFixed(fill._renderer.offset.x),
+              - toFixed(fill._renderer.offset.y));
+            ctx.scale(sx, sy);
+
+            a = elem._size / fill._renderer.scale.y;
+            b = elem._leading / fill._renderer.scale.y;
+            ctx.font = [elem._style, elem._weight, toFixed(a) + 'px/',
+              toFixed(b) + 'px', elem._family].join(' ');
+
+            c = fill._renderer.offset.x / fill._renderer.scale.x;
+            d = fill._renderer.offset.y / fill._renderer.scale.y;
+
+            ctx.fillText(elem.value, toFixed(c), toFixed(d));
+            ctx.restore();
+
+          } else {
+            ctx.fillText(elem.value, 0, 0);
+          }
+
+        }
+
+        if (!webgl.isHidden.test(stroke)) {
+
+          if (stroke._renderer && stroke._renderer.offset) {
+
+            sx = toFixed(stroke._renderer.scale.x);
+            sy = toFixed(stroke._renderer.scale.y);
+
+            ctx.save();
+            ctx.translate(- toFixed(stroke._renderer.offset.x),
+              - toFixed(stroke._renderer.offset.y));
+            ctx.scale(sx, sy);
+
+            a = elem._size / stroke._renderer.scale.y;
+            b = elem._leading / stroke._renderer.scale.y;
+            ctx.font = [elem._style, elem._weight, toFixed(a) + 'px/',
+              toFixed(b) + 'px', elem._family].join(' ');
+
+            c = stroke._renderer.offset.x / stroke._renderer.scale.x;
+            d = stroke._renderer.offset.y / stroke._renderer.scale.y;
+            e = linewidth / stroke._renderer.scale.x;
+
+            ctx.lineWidth = toFixed(e);
+            ctx.strokeText(elem.value, toFixed(c), toFixed(d));
+            ctx.restore();
+
+          } else {
+            ctx.strokeText(elem.value, 0, 0);
+          }
+
+        }
 
         ctx.restore();
 
@@ -5107,6 +5558,8 @@ this.Two = (function(previousTwo) {
           return this;
         }
 
+        this._update();
+
         // Calculate what changed
 
         var parent = this.parent;
@@ -5115,16 +5568,16 @@ this.Two = (function(previousTwo) {
         var flagTexture = this._flagVertices || this._flagFill
           || (this._fill instanceof Two.LinearGradient && (this._fill._flagSpread || this._fill._flagStops || this._fill._flagEndPoints))
           || (this._fill instanceof Two.RadialGradient && (this._fill._flagSpread || this._fill._flagStops || this._fill._flagRadius || this._fill._flagCenter || this._fill._flagFocal))
+          || (this._fill instanceof Two.Texture && (this._fill._flagLoaded && this._fill.loaded))
           || (this._stroke instanceof Two.LinearGradient && (this._stroke._flagSpread || this._stroke._flagStops || this._stroke._flagEndPoints))
           || (this._stroke instanceof Two.RadialGradient && (this._stroke._flagSpread || this._stroke._flagStops || this._stroke._flagRadius || this._stroke._flagCenter || this._stroke._flagFocal))
+          || (this._texture instanceof Two.Texture && (this._texture._flagLoaded && this._texture.loaded))
           || this._flagStroke || this._flagLinewidth || this._flagOpacity
           || parent._flagOpacity || this._flagVisible || this._flagScale
           || this._flagValue || this._flagFamily || this._flagSize
           || this._flagLeading || this._flagAlignment || this._flagBaseline
           || this._flagStyle || this._flagWeight || this._flagDecoration
           || !this._renderer.texture;
-
-        this._update();
 
         if (flagParentMatrix || flagMatrix) {
 
@@ -5204,16 +5657,16 @@ this.Two = (function(previousTwo) {
 
         this._update();
 
-        if (!this._renderer.gradient || this._flagEndPoints || this._flagStops) {
+        if (!this._renderer.effect || this._flagEndPoints || this._flagStops) {
 
-          this._renderer.gradient = ctx.createLinearGradient(
+          this._renderer.effect = ctx.createLinearGradient(
             this.left._x, this.left._y,
             this.right._x, this.right._y
           );
 
           for (var i = 0; i < this.stops.length; i++) {
             var stop = this.stops[i];
-            this._renderer.gradient.addColorStop(stop._offset, stop._color);
+            this._renderer.effect.addColorStop(stop._offset, stop._color);
           }
 
         }
@@ -5234,17 +5687,78 @@ this.Two = (function(previousTwo) {
 
         this._update();
 
-        if (!this._renderer.gradient || this._flagCenter || this._flagFocal
+        if (!this._renderer.effect || this._flagCenter || this._flagFocal
             || this._flagRadius || this._flagStops) {
 
-          this._renderer.gradient = ctx.createRadialGradient(
+          this._renderer.effect = ctx.createRadialGradient(
             this.center._x, this.center._y, 0,
             this.focal._x, this.focal._y, this._radius
           );
 
           for (var i = 0; i < this.stops.length; i++) {
             var stop = this.stops[i];
-            this._renderer.gradient.addColorStop(stop._offset, stop._color);
+            this._renderer.effect.addColorStop(stop._offset, stop._color);
+          }
+
+        }
+
+        return this.flagReset();
+
+      }
+
+    },
+
+    texture: {
+
+      render: function(ctx, elem) {
+
+        if (!ctx.canvas.getContext('2d')) {
+          return;
+        }
+
+        this._update();
+
+        var image = this.image;
+
+        if (!this._renderer.effect || (this._flagLoaded && this.loaded)) {
+          this._renderer.effect = ctx.createPattern(this.image, 'repeat');
+        }
+
+        if (this._flagOffset || this._flagLoaded || this._flagScale) {
+
+          if (!(this._renderer.offset instanceof Two.Vector)) {
+            this._renderer.offset = new Two.Vector();
+          }
+
+          this._renderer.offset.x = this._offset.x;
+          this._renderer.offset.y = this._offset.y;
+
+          if (image) {
+
+            this._renderer.offset.x -= image.width / 2;
+            this._renderer.offset.y -= image.height / 2;
+
+            if (this._scale instanceof Two.Vector) {
+              this._renderer.offset.x *= this._scale.x;
+              this._renderer.offset.y *= this._scale.y;
+            } else {
+              this._renderer.offset.x *= this._scale;
+              this._renderer.offset.y *= this._scale;
+            }
+          }
+
+        }
+
+        if (this._flagScale || this._flagLoaded) {
+
+          if (!(this._renderer.scale instanceof Two.Vector)) {
+            this._renderer.scale = new Two.Vector();
+          }
+
+          if (this._scale instanceof Two.Vector) {
+            this._renderer.scale.copy(this._scale);
+          } else {
+            this._renderer.scale.set(this._scale, this._scale);
           }
 
         }
@@ -5296,6 +5810,8 @@ this.Two = (function(previousTwo) {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, elem._renderer.textureCoordsBuffer);
 
+      // TODO: Is this necessary every time or can we do once?
+      // TODO: Create a registry for textures
       elem._renderer.texture = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, elem._renderer.texture);
 
@@ -5419,7 +5935,9 @@ this.Two = (function(previousTwo) {
         '}'
       ].join('\n')
 
-    }
+    },
+
+    TextureRegistry: new Two.Registry()
 
   };
 
@@ -5562,6 +6080,7 @@ this.Two = (function(previousTwo) {
     // Private object for renderer specific variables.
     this._renderer = {};
     this._renderer.flagMatrix = _.bind(Shape.FlagMatrix, this);
+    this.isShape = true;
 
     this.id = Two.Identifier + Two.uniqueId();
     this.classList = [];
@@ -5741,6 +6260,12 @@ this.Two = (function(previousTwo) {
     Two.Shape.call(this);
 
     this._renderer.type = 'path';
+    this._renderer.flagVertices = _.bind(Path.FlagVertices, this);
+    this._renderer.bindVertices = _.bind(Path.BindVertices, this);
+    this._renderer.unbindVertices = _.bind(Path.UnbindVertices, this);
+
+    this._renderer.flagFill = _.bind(Path.FlagFill, this);
+    this._renderer.flagStroke = _.bind(Path.FlagStroke, this);
 
     this._closed = !!closed;
     this._curved = !!curved;
@@ -5794,13 +6319,99 @@ this.Two = (function(previousTwo) {
       this._flagLength = true;
     },
 
+    BindVertices: function(items) {
+
+      // This function is called a lot
+      // when importing a large SVG
+      var i = items.length;
+      while (i--) {
+        items[i].bind(Two.Events.change, this._renderer.flagVertices);
+      }
+
+      this._renderer.flagVertices();
+
+    },
+
+    UnbindVertices: function(items) {
+
+      var i = items.length;
+      while (i--) {
+        items[i].unbind(Two.Events.change, this._renderer.flagVertices);
+      }
+
+      this._renderer.flagVertices();
+
+    },
+
+    FlagFill: function() {
+      this._flagFill = true;
+    },
+
+    FlagStroke: function() {
+      this._flagStroke = true;
+    },
+
     MakeObservable: function(object) {
 
       Two.Shape.MakeObservable(object);
 
-      // Only the first 8 properties are flagged like this. The subsequent
+      // Only the 6 defined properties are flagged like this. The subsequent
       // properties behave differently and need to be hand written.
-      _.each(Path.Properties.slice(0, 8), Two.Utils.defineProperty, object);
+      _.each(Path.Properties.slice(2, 8), Two.Utils.defineProperty, object);
+
+      Object.defineProperty(object, 'fill', {
+        enumerable: true,
+        get: function() {
+          return this._fill;
+        },
+        set: function(f) {
+
+          if (this._fill instanceof Two.Gradient
+            || this._fill instanceof Two.LinearGradient
+            || this._fill instanceof Two.RadialGradient
+            || this._fill instanceof Two.Texture) {
+            this._fill.unbind(Two.Events.change, this._renderer.flagFill);
+          }
+
+          this._fill = f;
+          this._flagFill = true;
+
+          if (this._fill instanceof Two.Gradient
+            || this._fill instanceof Two.LinearGradient
+            || this._fill instanceof Two.RadialGradient
+            || this._fill instanceof Two.Texture) {
+            this._fill.bind(Two.Events.change, this._renderer.flagFill);
+          }
+
+        }
+      });
+
+      Object.defineProperty(object, 'stroke', {
+        enumerable: true,
+        get: function() {
+          return this._stroke;
+        },
+        set: function(f) {
+
+          if (this._stroke instanceof Two.Gradient
+            || this._stroke instanceof Two.LinearGradient
+            || this._stroke instanceof Two.RadialGradient
+            || this._stroke instanceof Two.Texture) {
+            this._stroke.unbind(Two.Events.change, this._renderer.flagStroke);
+          }
+
+          this._stroke = f;
+          this._flagStroke = true;
+
+          if (this._stroke instanceof Two.Gradient
+            || this._stroke instanceof Two.LinearGradient
+            || this._stroke instanceof Two.RadialGradient
+            || this._stroke instanceof Two.Texture) {
+            this._stroke.bind(Two.Events.change, this._renderer.flagStroke);
+          }
+
+        }
+      });
 
       Object.defineProperty(object, 'length', {
         get: function() {
@@ -5856,7 +6467,7 @@ this.Two = (function(previousTwo) {
           return this._beginning;
         },
         set: function(v) {
-          this._beginning = min(max(v, 0.0), this._ending);
+          this._beginning = v;
           this._flagVertices = true;
         }
       });
@@ -5867,7 +6478,7 @@ this.Two = (function(previousTwo) {
           return this._ending;
         },
         set: function(v) {
-          this._ending = min(max(v, this._beginning), 1.0);
+          this._ending = v;
           this._flagVertices = true;
         }
       });
@@ -5882,45 +6493,27 @@ this.Two = (function(previousTwo) {
 
         set: function(vertices) {
 
-          var updateVertices = _.bind(Path.FlagVertices, this);
-
-          var bindVerts = _.bind(function(items) {
-
-            // This function is called a lot
-            // when importing a large SVG
-            var i = items.length;
-            while(i--) {
-              items[i].bind(Two.Events.change, updateVertices);
-            }
-
-            updateVertices();
-
-          }, this);
-
-          var unbindVerts = _.bind(function(items) {
-
-            _.each(items, function(v) {
-              v.unbind(Two.Events.change, updateVertices);
-            }, this);
-
-            updateVertices();
-
-          }, this);
+          var updateVertices = this._renderer.flagVertices;
+          var bindVertices = this._renderer.bindVertices;
+          var unbindVertices = this._renderer.unbindVertices;
 
           // Remove previous listeners
           if (this._collection) {
-            this._collection.unbind();
+            this._collection
+              .unbind(Two.Events.insert, bindVertices)
+              .unbind(Two.Events.remove, unbindVertices);
           }
 
           // Create new Collection with copy of vertices
           this._collection = new Two.Utils.Collection((vertices || []).slice(0));
 
           // Listen for Collection changes and bind / unbind
-          this._collection.bind(Two.Events.insert, bindVerts);
-          this._collection.bind(Two.Events.remove, unbindVerts);
+          this._collection
+            .bind(Two.Events.insert, bindVertices)
+            .bind(Two.Events.remove, unbindVertices);
 
           // Bind Initial Vertices
-          bindVerts(this._collection);
+          bindVertices(this._collection);
 
         }
 
@@ -6362,6 +6955,8 @@ this.Two = (function(previousTwo) {
         var l = this.vertices.length;
         var last = l - 1, v;
 
+        // TODO: Should clamp this so that `ia` and `ib`
+        // cannot select non-verts.
         var ia = round((this._beginning) * last);
         var ib = round((this._ending) * last);
 
@@ -7164,7 +7759,7 @@ this.Two = (function(previousTwo) {
     this.height = height;
     this.radius = radius;
 
-    this._update;
+    this._update();
     this.translation.set(ox, oy);
 
   };
@@ -7304,11 +7899,13 @@ this.Two = (function(previousTwo) {
   var canvas = (root.document ? root.document.createElement('canvas') : { getContext: _.identity });
   var ctx = canvas.getContext('2d');
 
-  Two.Text = function(message, x, y, styles) {
+  var Text = Two.Text = function(message, x, y, styles) {
 
     Two.Shape.call(this);
 
     this._renderer.type = 'text';
+    this._renderer.flagFill = _.bind(Text.FlagFill, this);
+    this._renderer.flagStroke = _.bind(Text.FlagStroke, this);
 
     this.value = message;
 
@@ -7336,16 +7933,77 @@ this.Two = (function(previousTwo) {
   _.extend(Two.Text, {
 
     Properties: [
-      'value', 'family', 'size', 'leading', 'alignment', 'fill', 'stroke',
-      'linewidth', 'style', 'weight', 'decoration', 'baseline', 'opacity',
-      'visible'
+      'value', 'family', 'size', 'leading', 'alignment', 'linewidth', 'style',
+      'weight', 'decoration', 'baseline', 'opacity', 'visible', 'fill', 'stroke'
     ],
+
+    FlagFill: function() {
+      this._flagFill = true;
+    },
+
+    FlagStroke: function() {
+      this._flagStroke = true;
+    },
 
     MakeObservable: function(object) {
 
       Two.Shape.MakeObservable(object);
 
-      _.each(Two.Text.Properties, Two.Utils.defineProperty, object);
+      _.each(Two.Text.Properties.slice(0, 12), Two.Utils.defineProperty, object);
+
+      Object.defineProperty(object, 'fill', {
+        enumerable: true,
+        get: function() {
+          return this._fill;
+        },
+        set: function(f) {
+
+          if (this._fill instanceof Two.Gradient
+            || this._fill instanceof Two.LinearGradient
+            || this._fill instanceof Two.RadialGradient
+            || this._fill instanceof Two.Texture) {
+            this._fill.unbind(Two.Events.change, this._renderer.flagFill);
+          }
+
+          this._fill = f;
+          this._flagFill = true;
+
+          if (this._fill instanceof Two.Gradient
+            || this._fill instanceof Two.LinearGradient
+            || this._fill instanceof Two.RadialGradient
+            || this._fill instanceof Two.Texture) {
+            this._fill.bind(Two.Events.change, this._renderer.flagFill);
+          }
+
+        }
+      });
+
+      Object.defineProperty(object, 'stroke', {
+        enumerable: true,
+        get: function() {
+          return this._stroke;
+        },
+        set: function(f) {
+
+          if (this._stroke instanceof Two.Gradient
+            || this._stroke instanceof Two.LinearGradient
+            || this._stroke instanceof Two.RadialGradient
+            || this._stroke instanceof Two.Texture) {
+            this._stroke.unbind(Two.Events.change, this._renderer.flagStroke);
+          }
+
+          this._stroke = f;
+          this._flagStroke = true;
+
+          if (this._stroke instanceof Two.Gradient
+            || this._stroke instanceof Two.LinearGradient
+            || this._stroke instanceof Two.RadialGradient
+            || this._stroke instanceof Two.Texture) {
+            this._stroke.bind(Two.Events.change, this._renderer.flagStroke);
+          }
+
+        }
+      });
 
       Object.defineProperty(object, 'clip', {
         enumerable: true,
@@ -7520,6 +8178,7 @@ this.Two = (function(previousTwo) {
   var Stop = Two.Stop = function(offset, color, opacity) {
 
     this._renderer = {};
+    this._renderer.type = 'stop';
 
     this.offset = _.isNumber(offset) ? offset
       : Stop.Index <= 0 ? 0 : 1;
@@ -7545,7 +8204,27 @@ this.Two = (function(previousTwo) {
 
     MakeObservable: function(object) {
 
-      _.each(Stop.Properties, Two.Utils.defineProperty, object);
+      _.each(Stop.Properties, function(property) {
+
+        var object = this;
+        var secret = '_' + property;
+        var flag = '_flag' + property.charAt(0).toUpperCase() + property.slice(1);
+
+        Object.defineProperty(object, property, {
+          enumerable: true,
+          get: function() {
+            return this[secret];
+          },
+          set: function(v) {
+            this[secret] = v;
+            this[flag] = true;
+            if (this.parent) {
+              this.parent._flagStops = true;
+            }
+          }
+        });
+
+      }, object);
 
     }
 
@@ -7591,9 +8270,15 @@ this.Two = (function(previousTwo) {
 
   var Gradient = Two.Gradient = function(stops) {
 
-    Two.Shape.call(this);
-
+    this._renderer = {};
     this._renderer.type = 'gradient';
+
+    this.id = Two.Identifier + Two.uniqueId();
+    this.classList = [];
+
+    this._renderer.flagStops = _.bind(Gradient.FlagStops, this);
+    this._renderer.bindStops = _.bind(Gradient.BindStops, this);
+    this._renderer.unbindStops = _.bind(Gradient.UnbindStops, this);
 
     this.spread = 'pad';
 
@@ -7611,8 +8296,6 @@ this.Two = (function(previousTwo) {
 
     MakeObservable: function(object) {
 
-      Two.Shape.MakeObservable(object);
-
       _.each(Gradient.Properties, Two.Utils.defineProperty, object);
 
       Object.defineProperty(object, 'stops', {
@@ -7625,42 +8308,24 @@ this.Two = (function(previousTwo) {
 
         set: function(stops) {
 
-          var updateStops = _.bind(Gradient.FlagStops, this);
-
-          var bindStops = _.bind(function(items) {
-
-            // This function is called a lot
-            // when importing a large SVG
-            var i = items.length;
-            while(i--) {
-              items[i].bind(Two.Events.change, updateStops);
-            }
-
-            updateStops();
-
-          }, this);
-
-          var unbindStops = _.bind(function(items) {
-
-            _.each(items, function(v) {
-              v.unbind(Two.Events.change, updateStops);
-            }, this);
-
-            updateStops();
-
-          }, this);
+          var updateStops = this._renderer.flagStops;
+          var bindStops = this._renderer.bindStops;
+          var unbindStops = this._renderer.unbindStops;
 
           // Remove previous listeners
           if (this._stops) {
-            this._stops.unbind();
+            this._stops
+              .unbind(Two.Events.insert, bindStops)
+              .unbind(Two.Events.remove, unbindStops);
           }
 
           // Create new Collection with copy of Stops
           this._stops = new Two.Utils.Collection((stops || []).slice(0));
 
           // Listen for Collection changes and bind / unbind
-          this._stops.bind(Two.Events.insert, bindStops);
-          this._stops.bind(Two.Events.remove, unbindStops);
+          this._stops
+            .bind(Two.Events.insert, bindStops)
+            .bind(Two.Events.remove, unbindStops);
 
           // Bind Initial Stops
           bindStops(this._stops);
@@ -7673,11 +8338,40 @@ this.Two = (function(previousTwo) {
 
     FlagStops: function() {
       this._flagStops = true;
+    },
+
+    BindStops: function(items) {
+
+      // This function is called a lot
+      // when importing a large SVG
+      var i = items.length;
+      while(i--) {
+        items[i].bind(Two.Events.change, this._renderer.flagStops);
+        items[i].parent = this;
+      }
+
+      this._renderer.flagStops();
+
+    },
+
+    UnbindStops: function(items) {
+
+      var i = items.length;
+      while(i--) {
+        items[i].unbind(Two.Events.change, this._renderer.flagStops);
+        delete items[i].parent;
+      }
+
+      this._renderer.flagStops();
+
     }
 
   });
 
-  _.extend(Gradient.prototype, Two.Shape.prototype, {
+  _.extend(Gradient.prototype, Two.Utils.Events, {
+
+    _flagStops: false,
+    _flagSpread: false,
 
     clone: function(parent) {
 
@@ -7693,11 +8387,9 @@ this.Two = (function(previousTwo) {
         clone[k] = this[k];
       }, this);
 
-      clone.translation.copy(this.translation);
-      clone.rotation = this.rotation;
-      clone.scale = this.scale;
-
-      parent.add(clone);
+      if (parent) {
+        parent.add(clone);
+      }
 
       return clone;
 
@@ -7719,11 +8411,19 @@ this.Two = (function(previousTwo) {
 
     },
 
+    _update: function() {
+
+      if (this._flagSpread || this._flagStops) {
+        this.trigger(Two.Events.change);
+      }
+
+      return this;
+
+    },
+
     flagReset: function() {
 
       this._flagSpread = this._flagStops = false;
-
-      Two.Shape.prototype.flagReset.call(this);
 
       return this;
 
@@ -7816,6 +8516,16 @@ this.Two = (function(previousTwo) {
 
     },
 
+    _update: function() {
+
+      if (this._flagEndPoints || this._flagSpread || this._flagStops) {
+        this.trigger(Two.Events.change);
+      }
+
+      return this;
+
+    },
+
     flagReset: function() {
 
       this._flagEndPoints = false;
@@ -7892,7 +8602,9 @@ this.Two = (function(previousTwo) {
 
   _.extend(RadialGradient.prototype, Two.Gradient.prototype, {
 
-    _flagEndPoints: false,
+    _flagRadius: false,
+    _flagCenter: false,
+    _flagFocal: false,
 
     clone: function(parent) {
 
@@ -7932,6 +8644,17 @@ this.Two = (function(previousTwo) {
 
     },
 
+    _update: function() {
+
+      if (this._flagRadius || this._flatCenter || this._flagFocal
+        || this._flagSpread || this._flagStops) {
+        this.trigger(Two.Events.change);
+      }
+
+      return this;
+
+    },
+
     flagReset: function() {
 
       this._flagRadius = this._flagCenter = this._flagFocal = false;
@@ -7945,6 +8668,836 @@ this.Two = (function(previousTwo) {
   });
 
   RadialGradient.MakeObservable(RadialGradient.prototype);
+
+})((typeof global !== 'undefined' ? global : this).Two);
+
+(function(Two) {
+
+  var _ = Two.Utils;
+  var regex = {
+    video: /\.(mp4|webm)$/i,
+    image: /\.(jpe?g|png|gif|tiff)$/i
+  };
+
+  var Texture = Two.Texture = function(src, callback) {
+
+    this._renderer = {};
+    this._renderer.type = 'texture';
+    this._renderer.flagOffset = _.bind(Texture.FlagOffset, this);
+    this._renderer.flagScale = _.bind(Texture.FlagScale, this);
+
+    this.id = Two.Identifier + Two.uniqueId();
+    this.classList = [];
+
+    this.offset = new Two.Vector();
+
+    if (_.isFunction(callback)) {
+      var loaded = _.bind(function() {
+        this.unbind(Two.Events.load, loaded);
+        if (_.isFunction(callback)) {
+          callback();
+        }
+      }, this);
+      this.bind(Two.Events.load, loaded);
+    }
+
+    if (_.isString(src)) {
+      this.src = src;
+    } else if (_.isElement(src)) {
+      this.image = src;
+    }
+
+    this._update();
+
+  };
+
+  _.extend(Texture, {
+
+    Properties: [
+      'src',
+      'image',
+      'loaded'
+    ],
+
+    ImageRegistry: new Two.Registry(),
+
+    getImage: function(src) {
+
+      if (Texture.ImageRegistry.contains(src)) {
+        return Texture.ImageRegistry.get(src);
+      }
+
+      var image;
+
+      if (regex.video.test(src)) {
+        image = document.createElement('video');
+      } else {
+        image = document.createElement('img');
+      }
+
+      image.crossOrigin = 'anonymous';
+
+      return image;
+
+    },
+
+    Register: {
+      canvas: function(texture, callback) {
+        texture._src = '#' + texture.id;
+        Texture.ImageRegistry.add(texture.src, texture.image);
+        if (_.isFunction(callback)) {
+          callback();
+        }
+      },
+      img: function(texture, callback) {
+
+        var loaded = function(e) {
+          texture.image.removeEventListener('load', loaded, false);
+          texture.image.removeEventListener('error', error, false);
+          if (_.isFunction(callback)) {
+            callback();
+          }
+        };
+        var error = function(e) {
+          texture.image.removeEventListener('load', loaded, false);
+          texture.image.removeEventListener('error', error, false);
+          throw new Two.Utils.Error('unable to load ' + texture.src);
+        };
+
+        texture.image.addEventListener('load', loaded, false);
+        texture.image.addEventListener('error', error, false);
+        texture.image.setAttribute('two-src', texture.src);
+        Texture.ImageRegistry.add(texture.src, texture.image);
+        texture.image.src = texture.src;
+
+      },
+      video: function(texture, callback) {
+
+        var loaded = function(e) {
+          texture.image.removeEventListener('load', loaded, false);
+          texture.image.removeEventListener('error', error, false);
+          texture.image.width = texture.image.videoWidth;
+          texture.image.height = texture.image.videoHeight;
+          texture.image.play();
+          if (_.isFunction(callback)) {
+            callback();
+          }
+        };
+        var error = function(e) {
+          texture.image.removeEventListener('load', loaded, false);
+          texture.image.removeEventListener('error', error, false);
+          throw new Two.Utils.Error('unable to load ' + texture.src);
+        };
+
+        texture.image.addEventListener('canplaythrough', loaded, false);
+        texture.image.addEventListener('error', error, false);
+        texture.image.setAttribute('two-src', texture.src);
+        Texture.ImageRegistry.add(texture.src, texture.image);
+        texture.image.src = texture.src;
+        texture.image.loop = true;
+        texture.image.load();
+
+      }
+    },
+
+    load: function(texture, callback) {
+
+      var src = texture.src;
+      var image = texture.image;
+      var tag = image && image.nodeName.toLowerCase();
+
+      if (texture._flagImage) {
+        if (/canvas/i.test(tag)) {
+          Texture.Register.canvas(texture, callback);
+        } else {
+          texture._src = image.getAttribute('two-src') || image.src;
+          Texture.Register[tag](texture, callback);
+        }
+      }
+
+      if (texture._flagSrc) {
+        if (!image) {
+          texture.image = Texture.getImage(texture.src);
+        }
+        tag = texture.image.nodeName.toLowerCase();
+        Texture.Register[tag](texture, callback);
+      }
+
+    },
+
+    FlagOffset: function() {
+      this._flagOffset = true;
+    },
+
+    FlagScale: function() {
+      this._flagScale = true;
+    },
+
+    MakeObservable: function(object) {
+
+      _.each(Texture.Properties, Two.Utils.defineProperty, object);
+
+      Object.defineProperty(object, 'offset', {
+        enumerable: true,
+        get: function() {
+          return this._offset;
+        },
+        set: function(v) {
+          if (this._offset) {
+            this._offset.unbind(Two.Events.change, this._renderer.flagOffset);
+          }
+          this._offset = v;
+          this._offset.bind(Two.Events.change, this._renderer.flagOffset);
+          this._flagOffset = true;
+        }
+      });
+
+      Object.defineProperty(object, 'scale', {
+        enumerable: true,
+        get: function() {
+          return this._scale;
+        },
+        set: function(v) {
+
+          if (this._scale instanceof Two.Vector) {
+            this._scale.unbind(Two.Events.change, this._renderer.flagScale);
+          }
+
+          this._scale = v;
+
+          if (this._scale instanceof Two.Vector) {
+            this._scale.bind(Two.Events.change, this._renderer.flagScale);
+          }
+
+          this._flagScale = true;
+
+        }
+      });
+
+    }
+
+  });
+
+  _.extend(Texture.prototype, Two.Utils.Events, Two.Shape.prototype, {
+
+    _flagSrc: false,
+    _flagImage: false,
+    _flagLoaded: false,
+
+    _flagOffset: false,
+    _flagScale: false,
+
+    _src: '',
+    _image: null,
+    _loaded: false,
+
+    _scale: 1,
+    _offset: null,
+
+    clone: function() {
+      return new Texture(this.src);
+    },
+
+    toObject: function() {
+      return {
+        src: this.src,
+        image: this.image
+      }
+    },
+
+    _update: function() {
+
+      if (this._flagSrc || this._flagImage) {
+        this.trigger(Two.Events.change);
+        this.loaded = false;
+        Texture.load(this, _.bind(function() {
+          this.loaded = true;
+          this
+            .trigger(Two.Events.change)
+            .trigger(Two.Events.load);
+        }, this));
+      }
+
+      if (this.image.readyState >= 4) {
+        this._flagImage = true;
+      }
+
+      return this;
+
+    },
+
+    flagReset: function() {
+
+      this._flagSrc = this._flagImage = this._flagLoaded
+        = this._flagScale = this._flagOffset = false;
+
+      return this;
+
+    }
+
+  });
+
+  Texture.MakeObservable(Texture.prototype);
+
+})((typeof global !== 'undefined' ? global : this).Two);
+
+(function(Two) {
+
+  var _ = Two.Utils;
+  var Path = Two.Path;
+  var Rectangle = Two.Rectangle;
+
+  var Sprite = Two.Sprite = function(path, ox, oy, cols, rows, frameRate) {
+
+    Path.call(this, [
+      new Two.Anchor(),
+      new Two.Anchor(),
+      new Two.Anchor(),
+      new Two.Anchor()
+    ], true);
+
+    this.noStroke();
+    this.noFill();
+
+    if (path instanceof Two.Texture) {
+      this.texture = path;
+    } else if (_.isString(path)) {
+      this.texture = new Two.Texture(path);
+    }
+
+    this._update();
+    this.translation.set(ox || 0, oy || 0);
+
+    if (_.isNumber(cols)) {
+      this.columns = cols;
+    }
+    if (_.isNumber(rows)) {
+      this.rows = rows;
+    }
+    if (_.isNumber(frameRate)) {
+      this.frameRate = frameRate;
+    }
+
+  };
+
+  _.extend(Sprite, {
+
+    Properties: [
+      'texture', 'columns', 'rows', 'frameRate'
+    ],
+
+    MakeObservable: function(obj) {
+
+      Rectangle.MakeObservable(obj);
+      _.each(Sprite.Properties, Two.Utils.defineProperty, obj);
+
+    }
+
+  })
+
+  _.extend(Sprite.prototype, Rectangle.prototype, {
+
+    _flagTexture: false,
+    _flagColumns: false,
+    _flagRows: false,
+    _flagFrameRate: false,
+
+    // Private variables
+    _amount: 1,
+    _duration: 0,
+    _index: 0,
+    _startTime: 0,
+    _playing: false,
+    _firstFrame: 0,
+    _lastFrame: 0,
+    _loop: true,
+
+    // Exposed through getter-setter
+    _texture: null,
+    _columns: 1,
+    _rows: 1,
+    _frameRate: 0,
+
+    play: function(firstFrame, lastFrame, onLastFrame) {
+
+      this._playing = true;
+      this._firstFrame = 0;
+      this._lastFrame = this.amount - 1;
+      this._startTime = _.performance.now();
+
+      if (_.isNumber(firstFrame)) {
+        this._firstFrame = firstFrame;
+      }
+      if (_.isNumber(lastFrame)) {
+        this._lastFrame = lastFrame;
+      }
+      if (_.isFunction(onLastFrame)) {
+        this._onLastFrame = onLastFrame;
+      } else {
+        delete this._onLastFrame;
+      }
+
+      return this;
+
+    },
+
+    pause: function() {
+
+      this._playing = false;
+      return this;
+
+    },
+
+    stop: function() {
+
+      this._playing = false;
+      this._index = 0;
+
+      return this;
+
+    },
+
+    clone: function(parent) {
+
+      parent = parent || this.parent;
+
+      var clone = new Sprite(
+        this.texture, this.translation.x, this.translation.y,
+        this.columns, this.rows, this.frameRate
+      );
+
+      if (this.playing) {
+        clone.play(this._firstFrame, this._lastFrame);
+        clone._loop = this._loop;
+      }
+
+      if (parent) {
+        parent.add(clone);
+      }
+
+      return clone;
+
+    },
+
+    _update: function() {
+
+      var effect = this._texture;
+      var cols = this._columns;
+      var rows = this._rows;
+
+      var width, height, elapsed, amount, duration;
+      var index, iw, ih, isRange;
+
+      if (this._flagColumns || this._flagRows) {
+        this._amount = this._columns * this._rows;
+      }
+
+      if (this._flagFrameRate) {
+        this._duration = 1000 * this._amount / this._frameRate;
+      }
+
+      if (this._flagTexture) {
+        this.fill = this._texture;
+      }
+
+      if (this._texture.loaded) {
+
+        iw = effect.image.width;
+        ih = effect.image.height;
+
+        width = iw / cols;
+        height = ih / rows;
+        amount = this._amount;
+
+        if (this.width !== width) {
+          this.width = width;
+        }
+        if (this.height !== height) {
+          this.height = height;
+        }
+
+        if (this._playing && this._frameRate > 0) {
+
+          if (_.isNaN(this._lastFrame)) {
+            this._lastFrame = amount - 1;
+          }
+
+          // TODO: Offload perf logic to instance of `Two`.
+          elapsed = _.performance.now() - this._startTime;
+          duration = 1000 * (this._lastFrame - this._firstFrame)
+            / this._frameRate;
+
+          if (this._loop) {
+            elapsed = elapsed % duration;
+          } else {
+            elapsed = Math.min(elapsed, duration);
+          }
+
+          index = _.lerp(this._firstFrame, this._lastFrame, elapsed / duration);
+          index = Math.floor(index);
+
+          if (index !== this._index) {
+            this._index = index;
+            if (index >= this._lastFrame - 1 && this._onLastFrame) {
+              this._onLastFrame();  // Shortcut for chainable sprite animations
+            }
+          }
+
+        }
+
+        var ox = (iw - width) / 2 + width * ((this._index % cols) + 1);
+        var oy = height * Math.floor((this._index / cols))
+          - (ih - height) / 2;
+
+        // TODO: Improve performance
+        if (ox !== effect.offset.x) {
+          effect.offset.x = ox;
+        }
+        if (oy !== effect.offset.y) {
+          effect.offset.y = oy;
+        }
+
+      }
+
+      Rectangle.prototype._update.call(this);
+
+      return this;
+
+    },
+
+    flagReset: function() {
+
+      this._flagTexture = this._flagColumns = this._flagRows
+        = this._flagFrameRate = false;
+
+      Rectangle.prototype.flagReset.call(this);
+
+      return this;
+    }
+
+
+  });
+
+  Sprite.MakeObservable(Sprite.prototype);
+
+  function map(v, a, b, c, d) {
+    return (d - c) * (v - a) / (b - a) + c;
+  }
+
+  function cmap(v, a, b, c, d) {
+    return Math.min(Math.max((d - c) * (v - a) / (b - a) + c, c), y2);
+  }
+
+  function clamp(v, a, b) {
+    return Math.min(Math.max(v, a), b);
+  }
+
+})((typeof global !== 'undefined' ? global : this).Two);
+
+(function(Two) {
+
+  var _ = Two.Utils;
+  var Path = Two.Path;
+  var Rectangle = Two.Rectangle;
+
+  var ImageSequence = Two.ImageSequence = function(paths, ox, oy, frameRate) {
+
+    Path.call(this, [
+      new Two.Anchor(),
+      new Two.Anchor(),
+      new Two.Anchor(),
+      new Two.Anchor()
+    ], true);
+
+    this._renderer.flagTextures = _.bind(ImageSequence.FlagTextures, this);
+    this._renderer.bindTextures = _.bind(ImageSequence.BindTextures, this);
+    this._renderer.unbindTextures = _.bind(ImageSequence.UnbindTextures, this);
+
+    this.noStroke();
+    this.noFill();
+
+    this.textures = _.map(paths, ImageSequence.GenerateTexture, this);
+
+    this._update();
+    this.translation.set(ox || 0, oy || 0);
+
+    if (_.isNumber(frameRate)) {
+      this.frameRate = frameRate;
+    } else {
+      this.frameRate = ImageSequence.DefaultFrameRate;
+    }
+
+  };
+
+  _.extend(ImageSequence, {
+
+    Properties: [
+      'frameRate'
+    ],
+
+    DefaultFrameRate: 30,
+
+    FlagTextures: function() {
+      this._flagTextures = true;
+    },
+
+    BindTextures: function(items) {
+
+      var i = items.length;
+      while (i--) {
+        items[i].bind(Two.Events.change, this._renderer.flagTextures);
+      }
+
+      this._renderer.flagTextures();
+
+    },
+
+    UnbindTextures: function(items) {
+
+      var i = items.length;
+      while (i--) {
+        items[i].unbind(Two.Events.change, this._renderer.flagTextures);
+      }
+
+      this._renderer.flagTextures();
+
+    },
+
+    MakeObservable: function(obj) {
+
+      Rectangle.MakeObservable(obj);
+      _.each(ImageSequence.Properties, Two.Utils.defineProperty, obj);
+
+      Object.defineProperty(obj, 'textures', {
+
+        enumerable: true,
+
+        get: function() {
+          return this._textures;
+        },
+
+        set: function(textures) {
+
+          var updateTextures = this._renderer.flagTextures;
+          var bindTextures = this._renderer.bindTextures;
+          var unbindTextures = this._renderer.unbindTextures;
+
+          // Remove previous listeners
+          if (this._textures) {
+            this._textures
+              .unbind(Two.Events.insert, bindTextures)
+              .unbind(Two.Events.remove, unbindTextures);
+          }
+
+          // Create new Collection with copy of vertices
+          this._textures = new Two.Utils.Collection((textures || []).slice(0));
+
+          // Listen for Collection changes and bind / unbind
+          this._textures
+            .bind(Two.Events.insert, bindTextures)
+            .bind(Two.Events.remove, unbindTextures);
+
+          // Bind Initial Textures
+          bindTextures(this._textures);
+
+        }
+
+      });
+
+    },
+
+    GenerateTexture: function(obj) {
+      if (obj instanceof Two.Texture) {
+        return obj;
+      } else if (_.isString(obj)) {
+        return new Two.Texture(obj);
+      }
+    }
+
+  });
+
+  _.extend(ImageSequence.prototype, Rectangle.prototype, {
+
+    _flagTextures: false,
+    _flagFrameRate: false,
+
+    // Private variables
+    _amount: 1,
+    _duration: 0,
+    _index: 0,
+    _startTime: 0,
+    _playing: false,
+    _firstFrame: 0,
+    _lastFrame: 0,
+    _loop: true,
+
+    // Exposed through getter-setter
+    _textures: null,
+    _frameRate: 0,
+
+    play: function(firstFrame, lastFrame, onLastFrame) {
+
+      this._playing = true;
+      this._firstFrame = 0;
+      this._lastFrame = this.amount - 1;
+      this._startTime = _.performance.now();
+
+      if (_.isNumber(firstFrame)) {
+        this._firstFrame = firstFrame;
+      }
+      if (_.isNumber(lastFrame)) {
+        this._lastFrame = lastFrame;
+      }
+      if (_.isFunction(onLastFrame)) {
+        this._onLastFrame = onLastFrame;
+      } else {
+        delete this._onLastFrame;
+      }
+
+      return this;
+
+    },
+
+    pause: function() {
+
+      this._playing = false;
+      return this;
+
+    },
+
+    stop: function() {
+
+      this._playing = false;
+      this._index = 0;
+
+      return this;
+
+    },
+
+    clone: function(parent) {
+
+      parent = parent || this.parent;
+
+      var clone = new ImageSequence(this.textures, this.translation.x,
+        this.translation.y, this.frameRate)
+
+        clone._loop = this._loop;
+
+        if (this._playing) {
+          clone.play();
+        }
+
+        if (parent) {
+          parent.add(clone);
+        }
+
+        return clone;
+
+    },
+
+    _update: function() {
+
+      var effects = this._textures;
+      var width, height, elapsed, amount, duration, texture;
+      var index;
+
+      if (this._flagTextures) {
+        this._amount = effects.length;
+      }
+
+      if (this._flagFrameRate) {
+        this._duration = 1000 * this._amount / this._frameRate;
+      }
+
+      if (this._playing && this._frameRate > 0) {
+
+        amount = this._amount;
+
+        if (_.isNaN(this._lastFrame)) {
+          this._lastFrame = amount - 1;
+        }
+
+        // TODO: Offload perf logic to instance of `Two`.
+        elapsed = _.performance.now() - this._startTime;
+        duration = 1000 * (this._lastFrame - this._firstFrame)
+          / this._frameRate;
+
+        if (this._loop) {
+          elapsed = elapsed % duration;
+        } else {
+          elapsed = Math.min(elapsed, duration);
+        }
+
+        index = _.lerp(this._firstFrame, this._lastFrame, elapsed / duration);
+        index = Math.floor(index);
+
+        if (index !== this._index) {
+
+          this._index = index;
+          texture = effects[this._index];
+
+          if (texture.loaded) {
+
+            width = texture.image.width;
+            height = texture.image.height;
+
+            if (this.width !== width) {
+              this.width = width;
+            }
+            if (this.height !== height) {
+              this.height = height;
+            }
+
+            this.fill = texture;
+
+            if (index >= this._lastFrame - 1 && this._onLastFrame) {
+              this._onLastFrame();  // Shortcut for chainable sprite animations
+            }
+
+          }
+
+        }
+
+      } else if (!(this.fill instanceof Two.Texture)) {
+
+        texture = effects[this._index];
+
+        if (texture.loaded) {
+
+          width = texture.image.width;
+          height = texture.image.height;
+
+          if (this.width !== width) {
+            this.width = width;
+          }
+          if (this.height !== height) {
+            this.height = height;
+          }
+
+          this.fill = texture;
+
+        }
+
+      }
+
+      Rectangle.prototype._update.call(this);
+
+      return this;
+
+    },
+
+    flagReset: function() {
+
+      this._flagTextures = this._flagFrameRate = false;
+      Rectangle.prototype.flagReset.call(this);
+
+      return this;
+
+    }
+
+  });
+
+  ImageSequence.MakeObservable(ImageSequence.prototype);
 
 })((typeof global !== 'undefined' ? global : this).Two);
 
@@ -8266,7 +9819,9 @@ this.Two = (function(previousTwo) {
       };
 
       this.children.forEach(function(child) {
-        child.translation.subSelf(rect.centroid);
+        if (child.isShape) {
+          child.translation.subSelf(rect.centroid);
+        }
       });
 
       // this.translation.copy(rect.centroid);
